@@ -4,11 +4,10 @@ from scrapling.fetchers import Fetcher
 class DiscourseFetcher:
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
-        self.fetcher = Fetcher()
 
     def _get_json(self, url: str) -> dict | None:
         try:
-            resp = self.fetcher.get(url, timeout=30)
+            resp = Fetcher.get(url, timeout=30)
             return resp.json()
         except Exception as e:
             print(f"[!] 请求失败 {url}: {e}")

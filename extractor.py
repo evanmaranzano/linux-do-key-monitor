@@ -79,11 +79,10 @@ def extract_keys(html_content: str, key_patterns: list[dict]) -> list[tuple[str,
 
 def verify_key(key_value: str, verify_url: str, verify_type: str = "bearer") -> int:
     try:
-        fetcher = Fetcher()
         headers = {}
         if verify_type == "bearer":
             headers["Authorization"] = f"Bearer {key_value}"
-        resp = fetcher.get(verify_url, headers=headers, timeout=10)
+        resp = Fetcher.get(verify_url, headers=headers, timeout=10)
         if resp.status == 200:
             return 1
         elif resp.status in (401, 403):
