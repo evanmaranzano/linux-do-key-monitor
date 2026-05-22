@@ -1,0 +1,155 @@
+import argparse
+import signal
+import time
+from pathlib import Path
+
+import yaml
+
+from fetcher import DiscourseFetcher
+from extractor import filter_by_title, extract_keys, verify_key
+from store import Store
+from switcher import create_switch
+import output
+
+
+def load_config(path: str) -> dict:
+    with open(path, encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def handle_cc_switch(cfg: dict, key_value: str):
+    sw = cfg.get("cc_switch", {})
+    if not sw.get("enabled"):
+        return
+    create_switch(sw["db_path"], key_value, sw.get("key_type", "mimo"))
+
+
+def run_one_round(cfg: dict, fetcher: DiscourseFetcher, store: Store, round_num: int):
+    base_url = cfg["forum"]["base_url"]
+    cat_slug = cfg["forum"]["category_slug"]
+    cat_id = cfg["forum"]["category_id"]
+    max_pages = cfg["monitor"]["max_pages"]
+    keywords = cfg["filter"]["keywords"]
+    exclude_kw = cfg["filter"]["exclude_keywords"]
+    key_patterns = cfg["keys"]
+    json_path = cfg["output"]["json_path"]
+
+    output.log_poll_start(round_num)
+
+    topics = fetcher.fetch_category_topics(cat_slug, cat_id, max_pages)
+    if not topics:
+        output.log_error("未能获取帖子列表")
+        return
+
+    seen_ids = set()
+    for t in topics:
+        tid = t.get("id")
+        if store.is_topic_seen(tid):
+            seen_ids.add(tid)
+
+    matched = filter_by_title(topics, keywords, exclude_kw, seen_ids)
+    new_keys_found = 0
+    valid_count = 0
+
+    for t in matched:
+        tid = t["id"]
+        detail = fetcher.fetch_topic_detail(tid)
+        if not detail or "post_stream" not in detail:
+            store.mark_topic_seen(tid, t.get("title", ""), has_key=False)
+            continue
+
+        posts = detail["post_stream"].get("posts", [])
+        if not posts:
+            store.mark_topic_seen(tid, t.get("title", ""), has_key=False)
+            continue
+
+        html = posts[0].get("cooked", "")
+        found = extract_keys(html, key_patterns)
+
+        if not found:
+            store.mark_topic_seen(tid, t.get("title", ""), has_key=False)
+            continue
+
+        for key_value, key_type in found:
+            if store.is_key_known(key_value):
+                continue
+
+            key_cfg = next((k for k in key_patterns if k["name"] == key_type), None)
+            valid = -1
+            if key_cfg:
+                valid = verify_key(key_value, key_cfg["verify_url"], key_cfg.get("verify_type", "bearer"))
+
+            store.save_key(key_value, key_type, tid, valid)
+            output.log_new_key(key_value, key_type, valid, tid, base_url)
+            new_keys_found += 1
+            if valid == 1:
+                valid_count += 1
+                handle_cc_switch(cfg, key_value)
+
+        store.mark_topic_seen(tid, t.get("title", ""), has_key=True)
+
+    all_keys = store.get_valid_keys()
+    try:
+        output.write_json(all_keys, json_path, base_url)
+    except Exception as e:
+        output.log_error(f"写入 JSON 失败: {e}")
+
+    output.log_round_summary(len(topics), len(matched), new_keys_found, valid_count)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="linux.do API Key Monitor")
+    parser.add_argument("--config", default="config.yaml", help="配置文件路径")
+    args = parser.parse_args()
+
+    cfg_path = Path(args.config)
+    if not cfg_path.exists():
+        print(f"配置文件不存在: {cfg_path}")
+        return
+
+    cfg = load_config(str(cfg_path))
+    interval = cfg["monitor"]["interval"]
+    base_url = cfg["forum"]["base_url"]
+
+    print("=== linux.do Key Monitor ===")
+    print(f"论坛: {base_url}")
+    print(f"轮询间隔: {interval}s")
+    print(f"关键词: {', '.join(cfg['filter']['keywords'])}")
+    print(f"Key 模式: {', '.join(k['name'] for k in cfg['keys'])}")
+    cc_sw = cfg.get("cc_switch", {})
+    if cc_sw.get("enabled"):
+        print(f"CC Switch: 启用")
+    print()
+
+    store = Store(cfg["output"]["db_path"])
+    fetcher = DiscourseFetcher(base_url)
+
+    running = True
+
+    def on_signal(sig, frame):
+        nonlocal running
+        print("\n收到退出信号，正在停止...")
+        running = False
+
+    signal.signal(signal.SIGINT, on_signal)
+
+    round_num = 1
+    try:
+        while running:
+            try:
+                run_one_round(cfg, fetcher, store, round_num)
+            except Exception as e:
+                output.log_error(f"轮询异常: {e}")
+            round_num += 1
+
+            for _ in range(interval):
+                if not running:
+                    break
+                time.sleep(1)
+    finally:
+        store.close()
+        print("已停止。")
+
+
+if __name__ == "__main__":
+    main()

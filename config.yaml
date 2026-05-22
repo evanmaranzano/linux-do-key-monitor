@@ -1,0 +1,36 @@
+forum:
+  base_url: "https://linux.do"
+  category_id: 36
+  category_slug: "welfare"
+
+monitor:
+  interval: 300
+  max_pages: 3
+
+filter:
+  keywords:
+    - "mimo"
+    - "小米"
+    - "token-plan"
+    - "token plan"
+  exclude_keywords:
+    - "已用完"
+    - "已结束"
+    - "已蹬完"
+    - "已登完"
+    - "已无"
+
+keys:
+  - name: "mimo"
+    pattern: "tp-[a-z0-9]{30,}"
+    verify_url: "https://token-plan-cn.xiaomimimo.com/v1/models"
+    verify_type: "bearer"
+
+cc_switch:
+  enabled: true
+  db_path: "C:/Users/Administrator/.cc-switch/cc-switch.db"
+  key_type: "mimo"
+
+output:
+  json_path: "data/found_keys.json"
+  db_path: "data/keys.db"
