@@ -63,7 +63,7 @@ PROVIDER_TEMPLATE = {
 }
 
 
-def create_switch(db_path: str, key_value: str) -> bool:
+def create_switch(db_path: str, key_value: str, key_type: str = "mimo") -> bool:
     db = Path(db_path)
     if not db.exists():
         print(f"[!] CC Switch 数据库不存在: {db}")

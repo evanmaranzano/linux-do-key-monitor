@@ -1,10 +1,12 @@
 from scrapling.fetchers import Fetcher
 
+Fetcher.configure(auto_match=False)
+
 
 class DiscourseFetcher:
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
-        self.fetcher = Fetcher(auto_match=False)
+        self.fetcher = Fetcher()
 
     def _get_json(self, url: str) -> dict | None:
         try:

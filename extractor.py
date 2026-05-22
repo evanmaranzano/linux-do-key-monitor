@@ -79,7 +79,7 @@ def extract_keys(html_content: str, key_patterns: list[dict]) -> list[tuple[str,
 
 def verify_key(key_value: str, verify_url: str, verify_type: str = "bearer") -> int:
     try:
-        fetcher = Fetcher(auto_match=False)
+        fetcher = Fetcher()
         headers = {}
         if verify_type == "bearer":
             headers["Authorization"] = f"Bearer {key_value}"
