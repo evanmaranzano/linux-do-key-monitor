@@ -1,4 +1,5 @@
 import re
+import base64
 from scrapling.fetchers import Fetcher
 
 
@@ -23,11 +24,33 @@ def filter_by_title(
 
 def extract_keys(html_content: str, key_patterns: list[dict]) -> list[tuple[str, str]]:
     results = []
+
+    # 1. 直接 regex 匹配
     for kp in key_patterns:
         matches = re.findall(kp["pattern"], html_content)
         for m in matches:
             results.append((m, kp["name"]))
-    return results
+
+    # 2. base64 编码的 key
+    b64_pattern = r'[A-Za-z0-9+/]{40,}={0,2}'
+    b64_matches = re.findall(b64_pattern, html_content)
+    for b64_str in b64_matches:
+        try:
+            decoded = base64.b64decode(b64_str).decode('utf-8')
+            for kp in key_patterns:
+                if re.fullmatch(kp["pattern"], decoded):
+                    results.append((decoded, kp["name"]))
+        except Exception:
+            continue
+
+    # 去重
+    seen = set()
+    unique = []
+    for item in results:
+        if item[0] not in seen:
+            seen.add(item[0])
+            unique.append(item)
+    return unique
 
 
 def verify_key(key_value: str, verify_url: str, verify_type: str = "bearer") -> int:
