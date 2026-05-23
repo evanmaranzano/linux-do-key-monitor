@@ -63,7 +63,7 @@ PROVIDER_TEMPLATE = {
 }
 
 
-def create_switch(db_path: str, key_value: str, key_type: str = "mimo") -> bool:
+def create_switch(db_path: str, key_value: str, key_type: str = "mimo", base_url: str = "https://token-plan-cn.xiaomimimo.com/anthropic") -> bool:
     db = Path(db_path)
     if not db.exists():
         print(f"[!] CC Switch 数据库不存在: {db}")
@@ -71,12 +71,19 @@ def create_switch(db_path: str, key_value: str, key_type: str = "mimo") -> bool:
 
     settings = json.loads(json.dumps(PROVIDER_TEMPLATE))
     settings["env"]["ANTHROPIC_AUTH_TOKEN"] = key_value
+    settings["env"]["ANTHROPIC_BASE_URL"] = base_url
 
     conn = sqlite3.connect(str(db))
     provider_id = str(uuid.uuid4())
     now_ts = int(datetime.now().timestamp())
     date_str = datetime.now().strftime("%m-%d %H:%M")
-    name = f"MiMo Auto {date_str}"
+    # 从 base_url 推断区域标签
+    region_tag = ""
+    if "sgp" in base_url:
+        region_tag = " SGP"
+    elif "cn" in base_url:
+        region_tag = " CN"
+    name = f"MiMo Auto{region_tag} {date_str}"
 
     conn.execute(
         """INSERT INTO providers (id, app_type, name, settings_config, category, meta, is_current, created_at)

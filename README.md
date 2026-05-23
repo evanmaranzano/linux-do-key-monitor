@@ -6,8 +6,9 @@
 
 - 每 5 分钟轮询 linux.do 福利区
 - 两阶段筛选：关键词标题过滤 + regex 内容提取
-- 自动验证 key 有效性
-- 发现有效 key 自动写入 CC Switch（未启用）
+- 自动验证 key 有效性，支持多区域（CN / SGP）
+- 发现有效 key 自动写入 CC Switch（未启用），按区域设置对应 base URL
+- base64 编码 key 自动解码
 - 终端实时输出 + JSON 文件记录
 
 ## 安装
@@ -45,8 +46,14 @@ filter:
 keys:
   - name: "mimo"
     pattern: "tp-[a-z0-9]{30,}"
-    verify_url: "https://token-plan-cn.xiaomimimo.com/v1/models"
     verify_type: "bearer"
+    regions:             # 多区域验证
+      - name: "cn"
+        verify_url: "https://token-plan-cn.xiaomimimo.com/v1/models"
+        base_url: "https://token-plan-cn.xiaomimimo.com/anthropic"
+      - name: "sgp"
+        verify_url: "https://token-plan-sgp.xiaomimimo.com/v1/models"
+        base_url: "https://token-plan-sgp.xiaomimimo.com/anthropic"
 ```
 
 ## CC Switch 集成

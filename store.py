@@ -23,6 +23,8 @@ class Store:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 key_value TEXT UNIQUE,
                 key_type TEXT,
+                region TEXT DEFAULT '',
+                base_url TEXT DEFAULT '',
                 topic_id INTEGER,
                 valid INTEGER,
                 verified_at TEXT,
@@ -30,6 +32,13 @@ class Store:
                 FOREIGN KEY (topic_id) REFERENCES seen_topics(topic_id)
             );
         """)
+        # 迁移：为旧表添加 region/base_url 列
+        cols = {row[1] for row in self.conn.execute("PRAGMA table_info(found_keys)").fetchall()}
+        if "region" not in cols:
+            self.conn.execute("ALTER TABLE found_keys ADD COLUMN region TEXT DEFAULT ''")
+        if "base_url" not in cols:
+            self.conn.execute("ALTER TABLE found_keys ADD COLUMN base_url TEXT DEFAULT ''")
+        self.conn.commit()
 
     def is_topic_seen(self, topic_id: int) -> bool:
         row = self.conn.execute(
@@ -50,11 +59,11 @@ class Store:
         ).fetchone()
         return row is not None
 
-    def save_key(self, key_value: str, key_type: str, topic_id: int, valid: int):
+    def save_key(self, key_value: str, key_type: str, topic_id: int, valid: int, region: str = "", base_url: str = ""):
         now = datetime.now().isoformat()
         self.conn.execute(
-            "INSERT OR IGNORE INTO found_keys (key_value, key_type, topic_id, valid, verified_at, discovered_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (key_value, key_type, topic_id, valid, now, now),
+            "INSERT OR IGNORE INTO found_keys (key_value, key_type, region, base_url, topic_id, valid, verified_at, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (key_value, key_type, region, base_url, topic_id, valid, now, now),
         )
         self.conn.commit()
 
@@ -67,17 +76,19 @@ class Store:
 
     def get_valid_keys(self) -> list[dict]:
         rows = self.conn.execute("""
-            SELECT key_value, key_type, valid, topic_id, verified_at, discovered_at
+            SELECT key_value, key_type, region, base_url, valid, topic_id, verified_at, discovered_at
             FROM found_keys ORDER BY discovered_at DESC
         """).fetchall()
         return [
             {
                 "key": r[0],
                 "type": r[1],
-                "valid": r[2] == 1,
-                "topic_id": r[3],
-                "verified_at": r[4],
-                "discovered_at": r[5],
+                "region": r[2] or "",
+                "base_url": r[3] or "",
+                "valid": r[4] == 1,
+                "topic_id": r[5],
+                "verified_at": r[6],
+                "discovered_at": r[7],
             }
             for r in rows
         ]

@@ -23,8 +23,14 @@ filter:
 keys:
   - name: "mimo"
     pattern: "tp-[a-z0-9]{30,}"
-    verify_url: "https://token-plan-cn.xiaomimimo.com/v1/models"
     verify_type: "bearer"
+    regions:
+      - name: "cn"
+        verify_url: "https://token-plan-cn.xiaomimimo.com/v1/models"
+        base_url: "https://token-plan-cn.xiaomimimo.com/anthropic"
+      - name: "sgp"
+        verify_url: "https://token-plan-sgp.xiaomimimo.com/v1/models"
+        base_url: "https://token-plan-sgp.xiaomimimo.com/anthropic"
 
 cc_switch:
   enabled: true

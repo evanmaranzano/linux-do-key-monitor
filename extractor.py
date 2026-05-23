@@ -77,16 +77,19 @@ def extract_keys(html_content: str, key_patterns: list[dict]) -> list[tuple[str,
     return unique
 
 
-def verify_key(key_value: str, verify_url: str, verify_type: str = "bearer") -> int:
-    try:
-        headers = {}
-        if verify_type == "bearer":
-            headers["Authorization"] = f"Bearer {key_value}"
-        resp = Fetcher.get(verify_url, headers=headers, timeout=10)
-        if resp.status == 200:
-            return 1
-        elif resp.status in (401, 403):
-            return 0
-        return -1
-    except Exception:
-        return -1
+def verify_key(key_value: str, regions: list[dict], verify_type: str = "bearer") -> tuple[int, dict | None]:
+    """遍历所有区域验证 key，返回 (valid, matched_region)。"""
+    saw_auth_fail = False
+    for region in regions:
+        try:
+            headers = {}
+            if verify_type == "bearer":
+                headers["Authorization"] = f"Bearer {key_value}"
+            resp = Fetcher.get(region["verify_url"], headers=headers, timeout=10)
+            if resp.status == 200:
+                return 1, region
+            elif resp.status in (401, 403):
+                saw_auth_fail = True
+        except Exception:
+            continue
+    return (0, None) if saw_auth_fail else (-1, None)

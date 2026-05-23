@@ -17,11 +17,11 @@ def load_config(path: str) -> dict:
         return yaml.safe_load(f)
 
 
-def handle_cc_switch(cfg: dict, key_value: str):
+def handle_cc_switch(cfg: dict, key_value: str, base_url: str):
     sw = cfg.get("cc_switch", {})
     if not sw.get("enabled"):
         return
-    create_switch(sw["db_path"], key_value, sw.get("key_type", "mimo"))
+    create_switch(sw["db_path"], key_value, sw.get("key_type", "mimo"), base_url)
 
 
 def run_one_round(cfg: dict, fetcher: DiscourseFetcher, store: Store, round_num: int):
@@ -76,15 +76,24 @@ def run_one_round(cfg: dict, fetcher: DiscourseFetcher, store: Store, round_num:
 
             key_cfg = next((k for k in key_patterns if k["name"] == key_type), None)
             valid = -1
-            if key_cfg:
-                valid = verify_key(key_value, key_cfg["verify_url"], key_cfg.get("verify_type", "bearer"))
+            region_name = ""
+            key_base_url = ""
+            if key_cfg and "regions" in key_cfg:
+                valid, matched_region = verify_key(key_value, key_cfg["regions"], key_cfg.get("verify_type", "bearer"))
+                if matched_region:
+                    region_name = matched_region["name"]
+                    key_base_url = matched_region.get("base_url", "")
+            elif key_cfg:
+                # 兼容旧配置（单 verify_url）
+                regions = [{"name": "", "verify_url": key_cfg["verify_url"]}]
+                valid, _ = verify_key(key_value, regions, key_cfg.get("verify_type", "bearer"))
 
-            store.save_key(key_value, key_type, tid, valid)
-            output.log_new_key(key_value, key_type, valid, tid, base_url)
+            store.save_key(key_value, key_type, tid, valid, region_name, key_base_url)
+            output.log_new_key(key_value, key_type, valid, tid, base_url, region_name)
             new_keys_found += 1
             if valid == 1:
                 valid_count += 1
-                handle_cc_switch(cfg, key_value)
+                handle_cc_switch(cfg, key_value, key_base_url)
 
         store.mark_topic_seen(tid, t.get("title", ""), has_key=True)
 
@@ -115,7 +124,10 @@ def main():
     print(f"论坛: {base_url}")
     print(f"轮询间隔: {interval}s")
     print(f"关键词: {', '.join(cfg['filter']['keywords'])}")
-    print(f"Key 模式: {', '.join(k['name'] for k in cfg['keys'])}")
+    for k in cfg["keys"]:
+        regions = [r["name"] for r in k.get("regions", [])]
+        region_str = ", ".join(regions) if regions else "单端点"
+        print(f"Key 模式: {k['name']} ({region_str})")
     cc_sw = cfg.get("cc_switch", {})
     if cc_sw.get("enabled"):
         print(f"CC Switch: 启用")
