@@ -1,5 +1,8 @@
+import logging
 import re
 import base64
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from scrapling.fetchers import Fetcher
 
 
@@ -77,19 +80,52 @@ def extract_keys(html_content: str, key_patterns: list[dict]) -> list[tuple[str,
     return unique
 
 
+_logger = logging.getLogger(__name__)
+
+
+def _verify_region(key_value: str, region: dict, verify_type: str) -> tuple[int, dict | None]:
+    try:
+        headers = {}
+        if verify_type == "bearer":
+            headers["Authorization"] = f"Bearer {key_value}"
+        resp = Fetcher.get(region["verify_url"], headers=headers, timeout=10)
+        if resp.status == 200:
+            return 1, region
+        if resp.status in (401, 403):
+            return 0, None
+    except Exception as e:
+        _logger.debug("验证区域 %s 失败: %s", region.get("name", "?"), e)
+    return -1, None
+
+
 def verify_key(key_value: str, regions: list[dict], verify_type: str = "bearer") -> tuple[int, dict | None]:
     """遍历所有区域验证 key，返回 (valid, matched_region)。"""
+    if not regions:
+        return -1, None
+    if len(regions) == 1:
+        return _verify_region(key_value, regions[0], verify_type)
+
     saw_auth_fail = False
-    for region in regions:
-        try:
-            headers = {}
-            if verify_type == "bearer":
-                headers["Authorization"] = f"Bearer {key_value}"
-            resp = Fetcher.get(region["verify_url"], headers=headers, timeout=10)
-            if resp.status == 200:
-                return 1, region
-            elif resp.status in (401, 403):
-                saw_auth_fail = True
-        except Exception:
-            continue
+    max_workers = min(len(regions), 4)
+    results: dict[int, tuple[int, dict | None]] = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_verify_region, key_value, region, verify_type): i
+            for i, region in enumerate(regions)
+        }
+        for future in as_completed(futures):
+            idx = futures[future]
+            try:
+                results[idx] = future.result()
+            except Exception:
+                results[idx] = (-1, None)
+            if results[idx][0] == 1:
+                return 1, results[idx][1]
+
+    for i in range(len(regions)):
+        valid, matched_region = results[i]
+        if valid == 1:
+            return 1, matched_region
+        if valid == 0:
+            saw_auth_fail = True
     return (0, None) if saw_auth_fail else (-1, None)

@@ -1,6 +1,7 @@
 import argparse
 import signal
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import yaml
@@ -22,6 +23,34 @@ def handle_cc_switch(cfg: dict, key_value: str, base_url: str):
     if not sw.get("enabled"):
         return
     create_switch(sw["db_path"], key_value, sw.get("key_type", "mimo"), base_url)
+
+
+def fetch_topic_details(fetcher: DiscourseFetcher, topics: list[dict]) -> dict[int, dict | None]:
+    if not topics:
+        return {}
+    if len(topics) == 1:
+        tid = topics[0]["id"]
+        try:
+            return {tid: fetcher.fetch_topic_detail(tid)}
+        except Exception as e:
+            output.log_error(f"获取帖子详情失败 {tid}: {e}")
+            return {tid: None}
+
+    details = {}
+    max_workers = min(len(topics), 4)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_tid = {
+            executor.submit(fetcher.fetch_topic_detail, t["id"]): t["id"]
+            for t in topics
+        }
+        for future in as_completed(future_to_tid):
+            tid = future_to_tid[future]
+            try:
+                details[tid] = future.result()
+            except Exception as e:
+                output.log_error(f"获取帖子详情失败 {tid}: {e}")
+                details[tid] = None
+    return details
 
 
 def run_one_round(cfg: dict, fetcher: DiscourseFetcher, store: Store, round_num: int):
@@ -50,10 +79,11 @@ def run_one_round(cfg: dict, fetcher: DiscourseFetcher, store: Store, round_num:
     matched = filter_by_title(topics, keywords, exclude_kw, seen_ids)
     new_keys_found = 0
     valid_count = 0
+    details_by_id = fetch_topic_details(fetcher, matched)
 
     for t in matched:
         tid = t["id"]
-        detail = fetcher.fetch_topic_detail(tid)
+        detail = details_by_id.get(tid)
         if not detail or "post_stream" not in detail:
             store.mark_topic_seen(tid, t.get("title", ""), has_key=False)
             continue
