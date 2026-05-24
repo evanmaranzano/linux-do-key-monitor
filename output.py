@@ -27,12 +27,18 @@ def log_error(msg: str):
     print(f"[{ts}] [!] {msg}")
 
 
+def _mask_key(key: str) -> str:
+    if len(key) <= 14:
+        return f"{key[:4]}...{key[-4:]}" if len(key) > 8 else "***"
+    return f"{key[:6]}...{key[-4:]}"
+
+
 def write_json(keys: list[dict], json_path: str, base_url: str):
     Path(json_path).parent.mkdir(parents=True, exist_ok=True)
     records = []
     for k in keys:
         record = {
-            "key": k["key"],
+            "key": _mask_key(k["key"]),
             "type": k["type"],
             "valid": k["valid"],
             "topic_url": f"{base_url}/t/topic/{k['topic_id']}",

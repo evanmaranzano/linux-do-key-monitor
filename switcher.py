@@ -73,25 +73,23 @@ def create_switch(db_path: str, key_value: str, key_type: str = "mimo", base_url
     settings["env"]["ANTHROPIC_AUTH_TOKEN"] = key_value
     settings["env"]["ANTHROPIC_BASE_URL"] = base_url
 
-    conn = sqlite3.connect(str(db))
-    provider_id = str(uuid.uuid4())
-    now_ts = int(datetime.now().timestamp())
-    date_str = datetime.now().strftime("%m-%d %H:%M")
-    # 从 base_url 推断区域标签
-    region_tag = ""
-    if "sgp" in base_url:
-        region_tag = " SGP"
-    elif "cn" in base_url:
-        region_tag = " CN"
-    name = f"MiMo Auto{region_tag} {date_str}"
+    with sqlite3.connect(str(db)) as conn:
+        provider_id = str(uuid.uuid4())
+        now_ts = int(datetime.now().timestamp())
+        date_str = datetime.now().strftime("%m-%d %H:%M")
+        region_tag = ""
+        if "sgp" in base_url:
+            region_tag = " SGP"
+        elif "cn" in base_url:
+            region_tag = " CN"
+        name = f"MiMo Auto{region_tag} {date_str}"
 
-    conn.execute(
-        """INSERT INTO providers (id, app_type, name, settings_config, category, meta, is_current, created_at)
-           VALUES (?, 'claude', ?, ?, 'cn_official', ?, 0, ?)""",
-        (provider_id, name, json.dumps(settings, ensure_ascii=False), '{"commonConfigEnabled":false,"endpointAutoSelect":true,"apiFormat":"anthropic"}', now_ts),
-    )
-    conn.commit()
-    conn.close()
+        conn.execute(
+            """INSERT INTO providers (id, app_type, name, settings_config, category, meta, is_current, created_at)
+               VALUES (?, 'claude', ?, ?, 'cn_official', ?, 0, ?)""",
+            (provider_id, name, json.dumps(settings, ensure_ascii=False), '{"commonConfigEnabled":false,"endpointAutoSelect":true,"apiFormat":"anthropic"}', now_ts),
+        )
+        conn.commit()
 
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}] CC Switch 新建 provider: {name}（未启用）")

@@ -18,11 +18,11 @@ def load_config(path: str) -> dict:
         return yaml.safe_load(f)
 
 
-def handle_cc_switch(cfg: dict, key_value: str, base_url: str):
+def handle_cc_switch(cfg: dict, key_value: str, base_url: str) -> bool:
     sw = cfg.get("cc_switch", {})
     if not sw.get("enabled"):
-        return
-    create_switch(sw["db_path"], key_value, sw.get("key_type", "mimo"), base_url)
+        return True
+    return create_switch(sw["db_path"], key_value, sw.get("key_type", "mimo"), base_url)
 
 
 def fetch_topic_details(fetcher: DiscourseFetcher, topics: list[dict]) -> dict[int, dict | None]:
@@ -65,6 +65,27 @@ def run_one_round(cfg: dict, fetcher: DiscourseFetcher, store: Store, round_num:
 
     output.log_poll_start(round_num)
 
+    # 补写失败的 CC Switch
+    for pending in store.get_pending_cc_switches():
+        if handle_cc_switch(cfg, pending["key_value"], pending["base_url"]):
+            store.mark_cc_switch_done(pending["key_value"])
+
+    # 重新验证 valid=-1 的 key
+    for rk in store.get_keys_needing_reverify():
+        key_cfg = next((k for k in key_patterns if k["name"] == rk["key_type"]), None)
+        if not key_cfg:
+            continue
+        regions = key_cfg.get("regions", [{"name": "", "verify_url": key_cfg["verify_url"]}])
+        valid, matched_region = verify_key(rk["key_value"], regions, key_cfg.get("verify_type", "bearer"))
+        store.update_key_validity(rk["key_value"], valid)
+        store.increment_reverify_count(rk["key_value"])
+        if valid == 1:
+            region_name = matched_region["name"] if matched_region else ""
+            key_base_url = matched_region.get("base_url", "") if matched_region else ""
+            output.log_new_key(rk["key_value"], rk["key_type"], valid, 0, base_url, region_name)
+            if handle_cc_switch(cfg, rk["key_value"], key_base_url):
+                store.mark_cc_switch_done(rk["key_value"])
+
     topics = fetcher.fetch_category_topics(cat_slug, cat_id, max_pages)
     if not topics:
         output.log_error("未能获取帖子列表")
@@ -85,12 +106,10 @@ def run_one_round(cfg: dict, fetcher: DiscourseFetcher, store: Store, round_num:
         tid = t["id"]
         detail = details_by_id.get(tid)
         if not detail or "post_stream" not in detail:
-            store.mark_topic_seen(tid, t.get("title", ""), has_key=False)
             continue
 
         posts = detail["post_stream"].get("posts", [])
         if not posts:
-            store.mark_topic_seen(tid, t.get("title", ""), has_key=False)
             continue
 
         html = posts[0].get("cooked", "")
@@ -123,7 +142,8 @@ def run_one_round(cfg: dict, fetcher: DiscourseFetcher, store: Store, round_num:
             new_keys_found += 1
             if valid == 1:
                 valid_count += 1
-                handle_cc_switch(cfg, key_value, key_base_url)
+                if handle_cc_switch(cfg, key_value, key_base_url):
+                    store.mark_cc_switch_done(key_value)
 
         store.mark_topic_seen(tid, t.get("title", ""), has_key=True)
 

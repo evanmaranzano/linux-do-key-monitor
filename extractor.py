@@ -108,11 +108,12 @@ def verify_key(key_value: str, regions: list[dict], verify_type: str = "bearer")
     saw_auth_fail = False
     max_workers = min(len(regions), 4)
     results: dict[int, tuple[int, dict | None]] = {}
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(_verify_region, key_value, region, verify_type): i
-            for i, region in enumerate(regions)
-        }
+    executor = ThreadPoolExecutor(max_workers=max_workers)
+    futures = {
+        executor.submit(_verify_region, key_value, region, verify_type): i
+        for i, region in enumerate(regions)
+    }
+    try:
         for future in as_completed(futures):
             idx = futures[future]
             try:
@@ -121,6 +122,8 @@ def verify_key(key_value: str, regions: list[dict], verify_type: str = "bearer")
                 results[idx] = (-1, None)
             if results[idx][0] == 1:
                 return 1, results[idx][1]
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
     for i in range(len(regions)):
         valid, matched_region = results[i]

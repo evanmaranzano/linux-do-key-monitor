@@ -29,6 +29,8 @@ class Store:
                 valid INTEGER,
                 verified_at TEXT,
                 discovered_at TEXT,
+                cc_switch_done INTEGER DEFAULT 0,
+                reverify_count INTEGER DEFAULT 0,
                 FOREIGN KEY (topic_id) REFERENCES seen_topics(topic_id)
             );
         """)
@@ -38,6 +40,10 @@ class Store:
             self.conn.execute("ALTER TABLE found_keys ADD COLUMN region TEXT DEFAULT ''")
         if "base_url" not in cols:
             self.conn.execute("ALTER TABLE found_keys ADD COLUMN base_url TEXT DEFAULT ''")
+        if "cc_switch_done" not in cols:
+            self.conn.execute("ALTER TABLE found_keys ADD COLUMN cc_switch_done INTEGER DEFAULT 0")
+        if "reverify_count" not in cols:
+            self.conn.execute("ALTER TABLE found_keys ADD COLUMN reverify_count INTEGER DEFAULT 0")
         self.conn.commit()
 
     def is_topic_seen(self, topic_id: int) -> bool:
@@ -71,6 +77,33 @@ class Store:
         self.conn.execute(
             "UPDATE found_keys SET valid = ?, verified_at = ? WHERE key_value = ?",
             (valid, datetime.now().isoformat(), key_value),
+        )
+        self.conn.commit()
+
+    def mark_cc_switch_done(self, key_value: str):
+        self.conn.execute(
+            "UPDATE found_keys SET cc_switch_done = 1 WHERE key_value = ?",
+            (key_value,),
+        )
+        self.conn.commit()
+
+    def get_pending_cc_switches(self) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT key_value, key_type, base_url FROM found_keys WHERE valid = 1 AND cc_switch_done = 0"
+        ).fetchall()
+        return [{"key_value": r[0], "key_type": r[1], "base_url": r[2]} for r in rows]
+
+    def get_keys_needing_reverify(self, max_retries: int = 10) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT key_value, key_type FROM found_keys WHERE valid = -1 AND reverify_count < ?",
+            (max_retries,),
+        ).fetchall()
+        return [{"key_value": r[0], "key_type": r[1]} for r in rows]
+
+    def increment_reverify_count(self, key_value: str):
+        self.conn.execute(
+            "UPDATE found_keys SET reverify_count = reverify_count + 1 WHERE key_value = ?",
+            (key_value,),
         )
         self.conn.commit()
 
