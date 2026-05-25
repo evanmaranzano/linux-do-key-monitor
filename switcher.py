@@ -191,7 +191,9 @@ def cleanup_expired_providers(db_path: str) -> tuple[int, int]:
 
         conn.commit()
 
+    ts = datetime.now().strftime("%H:%M:%S")
     if removed:
-        ts = datetime.now().strftime("%H:%M:%S")
         print(f"[{ts}] CC Switch 清理: 检查 {checked} 个, 移除 {removed} 个失效 provider")
+    else:
+        print(f"[{ts}] CC Switch 清理: 检查 {checked} 个, 全部有效")
     return checked, removed
