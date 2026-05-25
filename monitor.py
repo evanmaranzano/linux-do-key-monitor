@@ -9,7 +9,7 @@ import yaml
 from fetcher import DiscourseFetcher
 from extractor import filter_by_title, extract_keys, verify_key
 from store import Store
-from switcher import create_switch
+from switcher import create_switch, cleanup_expired_providers
 import output
 
 
@@ -205,6 +205,16 @@ def main():
                 run_one_round(cfg, fetcher, store, round_num)
             except Exception as e:
                 output.log_error(f"轮询异常: {e}")
+
+            # 每 5 轮清理一次 monitor 创建的失效 provider
+            if round_num % 5 == 0:
+                sw = cfg.get("cc_switch", {})
+                if sw.get("enabled"):
+                    try:
+                        cleanup_expired_providers(sw["db_path"])
+                    except Exception as e:
+                        output.log_error(f"CC Switch 清理失败: {e}")
+
             round_num += 1
 
             for _ in range(interval):

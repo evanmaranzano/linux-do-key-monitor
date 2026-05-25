@@ -4,6 +4,8 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+from scrapling.fetchers import Fetcher
+
 PROVIDER_TEMPLATE = {
     "attribution": {"commit": "", "pr": ""},
     "effortLevel": "xhigh",
@@ -102,3 +104,94 @@ def create_switch(db_path: str, key_value: str, key_type: str = "mimo", base_url
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}] CC Switch 新建 provider: {name}")
     return True
+
+
+def _extract_key_from_settings(settings_config: str) -> tuple[str, str] | None:
+    """从 provider settings_config 提取 key 和 base_url。"""
+    try:
+        cfg = json.loads(settings_config)
+        env = cfg.get("env", {})
+        token = env.get("ANTHROPIC_AUTH_TOKEN", "")
+        base_url = env.get("ANTHROPIC_BASE_URL", "")
+        if token:
+            return token, base_url
+    except Exception:
+        pass
+    return None
+
+
+def _verify_provider_key(key_value: str, base_url: str) -> bool:
+    """通过发送最小 chat 请求验证 key 是否有可用额度。"""
+    # base_url 形如 https://token-plan-cn.xiaomimimo.com/anthropic
+    chat_url = base_url.rstrip("/") + "/v1/messages"
+    headers = {
+        "x-api-key": key_value,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+    body = json.dumps({
+        "model": "mimo-v2.5-pro",
+        "max_tokens": 1,
+        "messages": [{"role": "user", "content": "hi"}],
+    })
+    try:
+        resp = Fetcher.post(chat_url, headers=headers, data=body, timeout=15)
+        # 200 = 有额度可用; 401/403 = key 无效; 429 = 额度用尽/限流
+        if resp.status == 200:
+            return True
+        # 429 或包含 quota/rate/balance 相关信息视为额度用尽
+        if resp.status == 429:
+            return False
+        body_text = ""
+        try:
+            body_text = resp.text.lower()
+        except Exception:
+            pass
+        if any(kw in body_text for kw in ("quota", "rate", "balance", "insufficient", "exceeded", "limit")):
+            return False
+        # 401/403 = key 无效
+        if resp.status in (401, 403):
+            return False
+        # 其他错误（500 等）暂不判定为失效
+        return True
+    except Exception:
+        return False
+
+
+def cleanup_expired_providers(db_path: str) -> tuple[int, int]:
+    """检查所有 monitor 创建的 provider，移除已失效的。返回 (检查数, 移除数)。"""
+    db = Path(db_path)
+    if not db.exists():
+        return 0, 0
+
+    checked = 0
+    removed = 0
+    with sqlite3.connect(str(db)) as conn:
+        rows = conn.execute(
+            "SELECT id, name, settings_config, is_current FROM providers WHERE name LIKE 'MiMo Auto%'"
+        ).fetchall()
+
+        for row in rows:
+            provider_id, name, settings_config, is_current = row
+            extracted = _extract_key_from_settings(settings_config)
+            if not extracted:
+                continue
+
+            key_value, base_url = extracted
+            checked += 1
+
+            if not _verify_provider_key(key_value, base_url):
+                # 跳过当前激活的，避免断连
+                if is_current:
+                    ts = datetime.now().strftime("%H:%M:%S")
+                    print(f"[{ts}] CC Switch 清理: 跳过激活中的失效 provider: {name}")
+                    continue
+                conn.execute("DELETE FROM providers WHERE id = ?", (provider_id,))
+                removed += 1
+
+        conn.commit()
+
+    if removed:
+        ts = datetime.now().strftime("%H:%M:%S")
+        print(f"[{ts}] CC Switch 清理: 检查 {checked} 个, 移除 {removed} 个失效 provider")
+    return checked, removed

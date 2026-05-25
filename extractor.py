@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 import base64
@@ -84,13 +85,35 @@ _logger = logging.getLogger(__name__)
 
 
 def _verify_region(key_value: str, region: dict, verify_type: str) -> tuple[int, dict | None]:
+    """通过发送最小 chat 请求验证 key 是否有可用额度。"""
+    base_url = region.get("base_url", region.get("verify_url", "")).rstrip("/")
+    # 如果 base_url 以 /v1/models 结尾，去掉后缀取根 URL
+    if base_url.endswith("/v1/models"):
+        base_url = base_url[: -len("/v1/models")]
+    chat_url = base_url + "/v1/messages"
+    headers = {
+        "x-api-key": key_value,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+    body = json.dumps({
+        "model": "mimo-v2.5-pro",
+        "max_tokens": 1,
+        "messages": [{"role": "user", "content": "hi"}],
+    })
     try:
-        headers = {}
-        if verify_type == "bearer":
-            headers["Authorization"] = f"Bearer {key_value}"
-        resp = Fetcher.get(region["verify_url"], headers=headers, timeout=10)
+        resp = Fetcher.post(chat_url, headers=headers, data=body, timeout=15)
         if resp.status == 200:
             return 1, region
+        if resp.status == 429:
+            return 0, None
+        body_text = ""
+        try:
+            body_text = resp.text.lower()
+        except Exception:
+            pass
+        if any(kw in body_text for kw in ("quota", "rate", "balance", "insufficient", "exceeded", "limit")):
+            return 0, None
         if resp.status in (401, 403):
             return 0, None
     except Exception as e:
