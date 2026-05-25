@@ -74,6 +74,14 @@ def create_switch(db_path: str, key_value: str, key_type: str = "mimo", base_url
     settings["env"]["ANTHROPIC_BASE_URL"] = base_url
 
     with sqlite3.connect(str(db)) as conn:
+        # 去重：已有同 key 的 provider 则跳过
+        existing = conn.execute(
+            "SELECT 1 FROM providers WHERE settings_config LIKE ? LIMIT 1",
+            (f'%{key_value}%',)
+        ).fetchone()
+        if existing:
+            return True
+
         provider_id = str(uuid.uuid4())
         now_ts = int(datetime.now().timestamp())
         date_str = datetime.now().strftime("%m-%d %H:%M")
@@ -92,5 +100,5 @@ def create_switch(db_path: str, key_value: str, key_type: str = "mimo", base_url
         conn.commit()
 
     ts = datetime.now().strftime("%H:%M:%S")
-    print(f"[{ts}] CC Switch 新建 provider: {name}（未启用）")
+    print(f"[{ts}] CC Switch 新建 provider: {name}")
     return True

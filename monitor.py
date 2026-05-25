@@ -67,8 +67,11 @@ def run_one_round(cfg: dict, fetcher: DiscourseFetcher, store: Store, round_num:
 
     # 补写失败的 CC Switch
     for pending in store.get_pending_cc_switches():
-        if handle_cc_switch(cfg, pending["key_value"], pending["base_url"]):
-            store.mark_cc_switch_done(pending["key_value"])
+        try:
+            if handle_cc_switch(cfg, pending["key_value"], pending["base_url"]):
+                store.mark_cc_switch_done(pending["key_value"])
+        except Exception as e:
+            output.log_error(f"CC Switch 补写失败 {pending['key_value'][:12]}...: {e}")
 
     # 重新验证 valid=-1 的 key
     for rk in store.get_keys_needing_reverify():

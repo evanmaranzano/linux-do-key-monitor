@@ -89,7 +89,7 @@ class Store:
 
     def get_pending_cc_switches(self) -> list[dict]:
         rows = self.conn.execute(
-            "SELECT key_value, key_type, base_url FROM found_keys WHERE valid = 1 AND cc_switch_done = 0"
+            "SELECT key_value, key_type, base_url FROM found_keys WHERE valid = 1 AND cc_switch_done = 0 LIMIT 20"
         ).fetchall()
         return [{"key_value": r[0], "key_type": r[1], "base_url": r[2]} for r in rows]
 
