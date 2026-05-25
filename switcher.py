@@ -1,8 +1,11 @@
 import json
+import logging
 import sqlite3
 import uuid
 from datetime import datetime
 from pathlib import Path
+
+_logger = logging.getLogger(__name__)
 
 from scrapling.fetchers import Fetcher
 
@@ -154,8 +157,9 @@ def _verify_provider_key(key_value: str, base_url: str) -> bool:
             return False
         # 其他错误（500 等）暂不判定为失效
         return True
-    except Exception:
-        return False
+    except Exception as e:
+        _logger.debug("验证 provider key 网络异常: %s", e)
+        return True  # 网络异常不等同于 key 失效
 
 
 def cleanup_expired_providers(db_path: str) -> tuple[int, int]:

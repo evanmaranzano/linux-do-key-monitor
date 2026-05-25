@@ -113,10 +113,13 @@ def run_one_round(cfg: dict, fetcher: DiscourseFetcher, store: Store, round_num:
 
         posts = detail["post_stream"].get("posts", [])
         if not posts:
+            store.mark_topic_seen(tid, t.get("title", ""), has_key=False)
             continue
 
-        html = posts[0].get("cooked", "")
-        found = extract_keys(html, key_patterns)
+        found = []
+        for post in posts:
+            html = post.get("cooked", "")
+            found.extend(extract_keys(html, key_patterns))
 
         if not found:
             store.mark_topic_seen(tid, t.get("title", ""), has_key=False)

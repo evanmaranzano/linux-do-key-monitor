@@ -144,14 +144,19 @@ def verify_key(key_value: str, regions: list[dict], verify_type: str = "bearer")
             except Exception:
                 results[idx] = (-1, None)
             if results[idx][0] == 1:
-                return 1, results[idx][1]
+                break
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
 
-    for i in range(len(regions)):
-        valid, matched_region = results[i]
+    # 找到有效结果直接返回（无需检查未完成的区域）
+    for valid, matched_region in results.values():
         if valid == 1:
             return 1, matched_region
+
+    for i in range(len(regions)):
+        if i not in results:
+            continue
+        valid, _ = results[i]
         if valid == 0:
             saw_auth_fail = True
     return (0, None) if saw_auth_fail else (-1, None)
