@@ -1,3 +1,4 @@
+import html
 import json
 import logging
 import re
@@ -37,7 +38,7 @@ def _extract_inserted_keys(html_content: str, key_patterns: list[dict]) -> list[
             continue
         prefix = prefix_m.group(1)
         # 找所有 前缀+非空白字符，只在包含非 ASCII 时处理
-        for m in re.finditer(re.escape(prefix) + r'[\S]+', html_content):
+        for m in re.finditer(re.escape(prefix) + r'[\S]{1,200}', html_content):
             raw = m.group(0)
             if not re.search(r'[^\x00-\x7f]', raw):
                 continue
@@ -49,6 +50,7 @@ def _extract_inserted_keys(html_content: str, key_patterns: list[dict]) -> list[
 
 def extract_keys(html_content: str, key_patterns: list[dict]) -> list[tuple[str, str]]:
     results = []
+    html_content = html.unescape(html_content)
 
     # 1. 直接 regex 匹配
     for kp in key_patterns:
@@ -62,7 +64,7 @@ def extract_keys(html_content: str, key_patterns: list[dict]) -> list[tuple[str,
     # 3. base64 编码的 key
     b64_pattern = r'[A-Za-z0-9+/]{40,}={0,2}'
     b64_matches = re.findall(b64_pattern, html_content)
-    for b64_str in b64_matches:
+    for b64_str in b64_matches[:50]:
         try:
             decoded = base64.b64decode(b64_str).decode('utf-8')
             for kp in key_patterns:

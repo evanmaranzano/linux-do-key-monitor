@@ -1,8 +1,12 @@
 import argparse
+import ipaddress
+import os
 import signal
+import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from urllib.parse import urlparse
 
 import yaml
 
@@ -21,11 +25,83 @@ def load_config(path: str) -> dict:
         return yaml.safe_load(f)
 
 
+def _is_safe_url(url: str) -> bool:
+    """拒绝指向内网/回环地址的 URL。"""
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").strip("[]")
+        if not host or host in ("localhost", "127.0.0.1", "0.0.0.0", "::1"):
+            return False
+        try:
+            ip = ipaddress.ip_address(host)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                return False
+        except ValueError:
+            pass
+        return True
+    except Exception:
+        return False
+
+
+def _validate_config(cfg: dict) -> list[str]:
+    """启动时校验配置安全性，返回警告列表。"""
+    warnings = []
+    # 校验 key regions 的 URL
+    for k in cfg.get("keys", []):
+        for r in k.get("regions", []):
+            for url_key in ("verify_url", "base_url"):
+                url = r.get(url_key, "")
+                if url and not _is_safe_url(url):
+                    warnings.append(f"key '{k['name']}' region '{r['name']}' {url_key} 指向内网: {url}")
+    # 校验路径不包含 ..
+    for path_key, path_val in [
+        ("cc_switch.db_path", cfg.get("cc_switch", {}).get("db_path", "")),
+        ("ccx_sync.config_path", cfg.get("ccx_sync", {}).get("config_path", "")),
+        ("ccx_sync.exe_path", cfg.get("ccx_sync", {}).get("exe_path", "")),
+        ("output.db_path", cfg.get("output", {}).get("db_path", "")),
+        ("output.json_path", cfg.get("output", {}).get("json_path", "")),
+    ]:
+        if path_val and ".." in str(path_val):
+            warnings.append(f"{path_key} 包含 .. 路径穿越: {path_val}")
+    # 校验 exe_path 存在性
+    exe_path = cfg.get("ccx_sync", {}).get("exe_path", "")
+    if exe_path and not Path(exe_path).exists():
+        warnings.append(f"ccx_sync.exe_path 不存在: {exe_path}")
+    return warnings
+
+
 def handle_cc_switch(cfg: dict, key_value: str, base_url: str) -> bool:
     sw = cfg.get("cc_switch", {})
     if not sw.get("enabled"):
         return True
     return create_switch(sw["db_path"], key_value, sw.get("key_type", "mimo"), base_url)
+
+
+def restart_ccx(ccx_cfg: dict):
+    exe_path = ccx_cfg.get("exe_path")
+    if not exe_path or not Path(exe_path).exists():
+        return
+    exe_name = Path(exe_path).name
+    # 终止已有进程
+    try:
+        subprocess.run(["taskkill", "/F", "/IM", exe_name], capture_output=True, timeout=5)
+        time.sleep(1)
+    except Exception:
+        pass
+    # 后台启动
+    try:
+        subprocess.Popen(
+            [exe_path],
+            cwd=str(Path(exe_path).parent),
+            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        ts = datetime.now().strftime("%H:%M:%S")
+        print(f"[{ts}] CCX: 已重启 {exe_name}")
+    except Exception as e:
+        ts = datetime.now().strftime("%H:%M:%S")
+        print(f"[{ts}] CCX: 重启失败: {e}")
 
 
 def reverify_ccx_keys(cfg: dict, store: Store):
@@ -98,6 +174,10 @@ def run_one_round(cfg: dict, fetcher: DiscourseFetcher, store: Store, round_num:
 
     output.log_poll_start(round_num)
 
+    ccx_cfg = cfg.get("ccx_sync", {})
+    ccx_config_path = ccx_cfg.get("config_path", "")
+    ccx_mtime_before = Path(ccx_config_path).stat().st_mtime if ccx_config_path and Path(ccx_config_path).exists() else 0
+
     # 补写失败的 CC Switch
     for pending in store.get_pending_cc_switches():
         try:
@@ -111,7 +191,10 @@ def run_one_round(cfg: dict, fetcher: DiscourseFetcher, store: Store, round_num:
         key_cfg = next((k for k in key_patterns if k["name"] == rk["key_type"]), None)
         if not key_cfg:
             continue
-        regions = key_cfg.get("regions", [{"name": "", "verify_url": key_cfg["verify_url"]}])
+        if "regions" in key_cfg:
+            regions = key_cfg["regions"]
+        else:
+            regions = [{"name": "", "verify_url": key_cfg["verify_url"]}]
         valid, matched_region = verify_key(rk["key_value"], regions, key_cfg.get("verify_type", "bearer"))
         store.update_key_validity(rk["key_value"], valid)
         store.increment_reverify_count(rk["key_value"])
@@ -219,6 +302,11 @@ def run_one_round(cfg: dict, fetcher: DiscourseFetcher, store: Store, round_num:
 
     output.log_round_summary(len(topics), len(matched), new_keys_found, valid_count)
 
+    if ccx_cfg.get("enabled") and ccx_cfg.get("exe_path"):
+        ccx_mtime_after = Path(ccx_config_path).stat().st_mtime if ccx_config_path and Path(ccx_config_path).exists() else 0
+        if ccx_mtime_after != ccx_mtime_before:
+            restart_ccx(ccx_cfg)
+
 
 def main():
     parser = argparse.ArgumentParser(description="linux.do API Key Monitor")
@@ -231,6 +319,15 @@ def main():
         return
 
     cfg = load_config(str(cfg_path))
+
+    # 启动安全校验
+    config_warnings = _validate_config(cfg)
+    for w in config_warnings:
+        print(f"[!] 安全警告: {w}")
+    if any("内网" in w for w in config_warnings):
+        print("[!] 检测到内网地址配置，拒绝启动。请检查 config.yaml。")
+        return
+
     interval = cfg["monitor"]["interval"]
     base_url = cfg["forum"]["base_url"]
 
@@ -245,10 +342,22 @@ def main():
     cc_sw = cfg.get("cc_switch", {})
     if cc_sw.get("enabled"):
         print(f"CC Switch: 启用")
+    # 打印验证目标供用户确认
+    for k in cfg["keys"]:
+        for r in k.get("regions", []):
+            for url_key in ("verify_url", "base_url"):
+                url = r.get(url_key, "")
+                if url:
+                    print(f"  验证目标: {url}")
     print()
 
     store = Store(cfg["output"]["db_path"])
     fetcher = DiscourseFetcher(base_url)
+
+    # 启动时确保 CCX 运行
+    ccx_cfg = cfg.get("ccx_sync", {})
+    if ccx_cfg.get("enabled") and ccx_cfg.get("exe_path"):
+        restart_ccx(ccx_cfg)
 
     running = True
 
@@ -267,18 +376,17 @@ def main():
             except Exception as e:
                 output.log_error(f"轮询异常: {e}")
 
-            # 每 5 轮清理一次 monitor 创建的失效 provider
-            if round_num % 5 == 0:
-                sw = cfg.get("cc_switch", {})
-                if sw.get("enabled"):
-                    try:
-                        cleanup_expired_providers(sw["db_path"])
-                    except Exception as e:
-                        output.log_error(f"CC Switch 清理失败: {e}")
+            # 每轮清理失效的 CC Switch provider
+            sw = cfg.get("cc_switch", {})
+            if sw.get("enabled"):
+                try:
+                    cleanup_expired_providers(sw["db_path"])
+                except Exception as e:
+                    output.log_error(f"CC Switch 清理失败: {e}")
 
-            # 定期重新验证 CCX config 中的 key
+            # 每轮重新验证 CCX config 中的 key
             ccx_cfg = cfg.get("ccx_sync", {})
-            if ccx_cfg.get("enabled") and round_num % ccx_cfg.get("reverify_interval", 3) == 0:
+            if ccx_cfg.get("enabled"):
                 try:
                     reverify_ccx_keys(cfg, store)
                 except Exception as e:

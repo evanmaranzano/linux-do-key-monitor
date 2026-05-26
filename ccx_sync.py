@@ -24,19 +24,25 @@ def _read_config(config_path: str) -> dict | None:
 
 def _write_config(config_path: str, cfg: dict) -> bool:
     path = Path(config_path)
-    try:
-        fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=2, ensure_ascii=False)
-        os.replace(tmp, str(path))
-        return True
-    except Exception as e:
-        _log(f"写入配置失败: {e}")
+    for attempt in range(3):
+        tmp = None
         try:
-            os.unlink(tmp)
-        except Exception:
-            pass
-        return False
+            fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, indent=2, ensure_ascii=False)
+            os.replace(tmp, str(path))
+            return True
+        except Exception as e:
+            _log(f"写入配置失败 (attempt {attempt + 1}): {e}")
+            if tmp:
+                try:
+                    os.unlink(tmp)
+                except Exception:
+                    pass
+            if attempt < 2:
+                import time
+                time.sleep(0.2 * (attempt + 1))
+    return False
 
 
 def add_key_to_ccx(config_path: str, key_value: str) -> bool:

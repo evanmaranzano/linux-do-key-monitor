@@ -5,7 +5,7 @@ from pathlib import Path
 
 def log_new_key(key_value: str, key_type: str, valid: int, topic_id: int, base_url: str, region: str = ""):
     ts = datetime.now().strftime("%H:%M:%S")
-    short = f"{key_value[:8]}...{key_value[-6:]}"
+    short = f"{key_value[:6]}...{key_value[-4:]}" if len(key_value) > 10 else "***"
     status = "有效 [OK]" if valid == 1 else ("无效 [FAIL]" if valid == 0 else "未知 [?]")
     region_tag = f" [{region}]" if region else ""
     source = f"/t/topic/{topic_id}"

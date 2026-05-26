@@ -2,12 +2,32 @@ import json
 import logging
 import sqlite3
 import uuid
+import ipaddress
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 _logger = logging.getLogger(__name__)
 
 from scrapling.fetchers import Fetcher
+
+
+def _is_safe_url(url: str) -> bool:
+    """拒绝指向内网/回环地址的 URL。"""
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").strip("[]")
+        if not host or host in ("localhost", "127.0.0.1", "0.0.0.0", "::1"):
+            return False
+        try:
+            ip = ipaddress.ip_address(host)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                return False
+        except ValueError:
+            pass  # hostname, not IP — OK
+        return True
+    except Exception:
+        return False
 
 PROVIDER_TEMPLATE = {
     "attribution": {"commit": "", "pr": ""},
@@ -74,6 +94,10 @@ def create_switch(db_path: str, key_value: str, key_type: str = "mimo", base_url
         print(f"[!] CC Switch 数据库不存在: {db}")
         return False
 
+    if not _is_safe_url(base_url):
+        print(f"[!] CC Switch: 拒绝不安全的 base_url: {base_url}")
+        return False
+
     settings = json.loads(json.dumps(PROVIDER_TEMPLATE))
     settings["env"]["ANTHROPIC_AUTH_TOKEN"] = key_value
     settings["env"]["ANTHROPIC_BASE_URL"] = base_url
@@ -125,6 +149,9 @@ def _extract_key_from_settings(settings_config: str) -> tuple[str, str] | None:
 
 def _verify_provider_key(key_value: str, base_url: str) -> bool:
     """通过发送最小 chat 请求验证 key 是否有可用额度。"""
+    if not _is_safe_url(base_url):
+        _logger.warning("拒绝验证不安全的 base_url: %s", base_url)
+        return False
     # base_url 形如 https://token-plan-cn.xiaomimimo.com/anthropic
     chat_url = base_url.rstrip("/") + "/v1/messages"
     headers = {
