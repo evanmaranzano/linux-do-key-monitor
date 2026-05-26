@@ -124,6 +124,12 @@ def run_one_round(cfg: dict, fetcher: DiscourseFetcher, store: Store, round_num:
             ccx_cfg = cfg.get("ccx_sync", {})
             if ccx_cfg.get("enabled") and region_name == "cn":
                 add_key_to_ccx(ccx_cfg["config_path"], rk["key_value"])
+            elif ccx_cfg.get("enabled") and region_name != "cn":
+                cn_region = next((r for r in key_cfg.get("regions", []) if r["name"] == "cn"), None)
+                if cn_region:
+                    cn_valid, _ = verify_key(rk["key_value"], [cn_region], key_cfg.get("verify_type", "bearer"))
+                    if cn_valid == 1:
+                        add_key_to_ccx(ccx_cfg["config_path"], rk["key_value"])
         elif valid == 0:
             ccx_cfg = cfg.get("ccx_sync", {})
             if ccx_cfg.get("enabled"):
@@ -194,6 +200,14 @@ def run_one_round(cfg: dict, fetcher: DiscourseFetcher, store: Store, round_num:
                     ccx_cfg = cfg.get("ccx_sync", {})
                     if ccx_cfg.get("enabled"):
                         add_key_to_ccx(ccx_cfg["config_path"], key_value)
+                elif region_name != "cn":
+                    ccx_cfg = cfg.get("ccx_sync", {})
+                    if ccx_cfg.get("enabled"):
+                        cn_region = next((r for r in key_cfg.get("regions", []) if r["name"] == "cn"), None)
+                        if cn_region:
+                            cn_valid, _ = verify_key(key_value, [cn_region], key_cfg.get("verify_type", "bearer"))
+                            if cn_valid == 1:
+                                add_key_to_ccx(ccx_cfg["config_path"], key_value)
 
         store.mark_topic_seen(tid, t.get("title", ""), has_key=True)
 
