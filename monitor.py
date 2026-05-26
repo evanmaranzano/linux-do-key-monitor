@@ -6,10 +6,13 @@ from pathlib import Path
 
 import yaml
 
+from datetime import datetime
+
 from fetcher import DiscourseFetcher
 from extractor import filter_by_title, extract_keys, verify_key
 from store import Store
 from switcher import create_switch, cleanup_expired_providers
+from ccx_sync import add_key_to_ccx, remove_key_from_ccx, get_ccx_keys
 import output
 
 
@@ -23,6 +26,36 @@ def handle_cc_switch(cfg: dict, key_value: str, base_url: str) -> bool:
     if not sw.get("enabled"):
         return True
     return create_switch(sw["db_path"], key_value, sw.get("key_type", "mimo"), base_url)
+
+
+def reverify_ccx_keys(cfg: dict, store: Store):
+    ccx_cfg = cfg.get("ccx_sync", {})
+    if not ccx_cfg.get("enabled"):
+        return
+    config_path = ccx_cfg["config_path"]
+    ccx_keys = get_ccx_keys(config_path)
+    if not ccx_keys:
+        return
+
+    key_patterns = cfg["keys"]
+    removed = 0
+    for key_value in ccx_keys:
+        key_cfg = next((k for k in key_patterns if k["name"] == "mimo"), None)
+        if not key_cfg:
+            continue
+        regions = key_cfg.get("regions", [])
+        cn_region = next((r for r in regions if r["name"] == "cn"), None)
+        if not cn_region:
+            continue
+        valid, _ = verify_key(key_value, [cn_region], key_cfg.get("verify_type", "bearer"))
+        if valid != 1:
+            remove_key_from_ccx(config_path, key_value)
+            store.update_key_validity(key_value, valid)
+            removed += 1
+
+    if removed:
+        ts = datetime.now().strftime("%H:%M:%S")
+        print(f"[{ts}] CCX 重新验证: 检查 {len(ccx_keys)} 个, 移除 {removed} 个失效 key")
 
 
 def fetch_topic_details(fetcher: DiscourseFetcher, topics: list[dict]) -> dict[int, dict | None]:
@@ -88,6 +121,13 @@ def run_one_round(cfg: dict, fetcher: DiscourseFetcher, store: Store, round_num:
             output.log_new_key(rk["key_value"], rk["key_type"], valid, 0, base_url, region_name)
             if handle_cc_switch(cfg, rk["key_value"], key_base_url):
                 store.mark_cc_switch_done(rk["key_value"])
+            ccx_cfg = cfg.get("ccx_sync", {})
+            if ccx_cfg.get("enabled") and region_name == "cn":
+                add_key_to_ccx(ccx_cfg["config_path"], rk["key_value"])
+        elif valid == 0:
+            ccx_cfg = cfg.get("ccx_sync", {})
+            if ccx_cfg.get("enabled"):
+                remove_key_from_ccx(ccx_cfg["config_path"], rk["key_value"])
 
     topics = fetcher.fetch_category_topics(cat_slug, cat_id, max_pages)
     if not topics:
@@ -150,6 +190,10 @@ def run_one_round(cfg: dict, fetcher: DiscourseFetcher, store: Store, round_num:
                 valid_count += 1
                 if handle_cc_switch(cfg, key_value, key_base_url):
                     store.mark_cc_switch_done(key_value)
+                if region_name == "cn":
+                    ccx_cfg = cfg.get("ccx_sync", {})
+                    if ccx_cfg.get("enabled"):
+                        add_key_to_ccx(ccx_cfg["config_path"], key_value)
 
         store.mark_topic_seen(tid, t.get("title", ""), has_key=True)
 
@@ -217,6 +261,14 @@ def main():
                         cleanup_expired_providers(sw["db_path"])
                     except Exception as e:
                         output.log_error(f"CC Switch 清理失败: {e}")
+
+            # 定期重新验证 CCX config 中的 key
+            ccx_cfg = cfg.get("ccx_sync", {})
+            if ccx_cfg.get("enabled") and round_num % ccx_cfg.get("reverify_interval", 3) == 0:
+                try:
+                    reverify_ccx_keys(cfg, store)
+                except Exception as e:
+                    output.log_error(f"CCX 重新验证失败: {e}")
 
             round_num += 1
 

@@ -8,6 +8,7 @@
 - 两阶段筛选：关键词标题过滤 + regex 内容提取
 - 自动验证 key 有效性，支持多区域（CN / SGP）
 - 发现有效 key 自动写入 CC Switch（未启用），按区域设置对应 base URL
+- 发现有效 CN key 自动同步到 CCX Desktop config.json，失效 key 自动移除
 - base64 编码 key 自动解码
 - 终端实时输出 + JSON 文件记录
 
@@ -60,6 +61,17 @@ keys:
 
 发现有效 key 自动写入 CC Switch 数据库，`is_current=0`（未启用），在 CC Switch 应用中手动切换即可。
 
+## CCX Desktop 集成
+
+发现有效 CN key 自动同步到 CCX Desktop 的 `config.json`（`upstream[0].apiKeys`）。定期重新验证已同步的 key，失效的自动移除。
+
+```yaml
+ccx_sync:
+  enabled: true
+  config_path: "C:/Users/Administrator/AppData/Roaming/ccx-desktop/.config/config.json"
+  reverify_interval: 3   # 每 N 轮全量重验 CCX 中的 key
+```
+
 ## 注意事项
 
 - scrapling `Fetcher.post()` 请求体参数是 `data=`，不是 `body=`（TypeError 会被静默吞掉）
@@ -75,7 +87,8 @@ keys:
 ├── extractor.py       # 关键词过滤 + regex 提取
 ├── store.py           # SQLite 存储
 ├── output.py          # 输出格式化
-└── switcher.py        # CC Switch 写入
+├── switcher.py        # CC Switch 写入
+└── ccx_sync.py        # CCX Desktop config.json 同步
 ```
 
 ## License
