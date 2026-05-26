@@ -60,6 +60,12 @@ keys:
 
 发现有效 key 自动写入 CC Switch 数据库，`is_current=0`（未启用），在 CC Switch 应用中手动切换即可。
 
+## 注意事项
+
+- scrapling `Fetcher.post()` 请求体参数是 `data=`，不是 `body=`（TypeError 会被静默吞掉）
+- key 验证必须用 `/v1/messages` 发实际 chat 请求，`/v1/models` 只验 auth 不验额度
+- scrapling 代理需在 `~/.bashrc` 设置 `export http_proxy=http://127.0.0.1:7897`（curl_cffi 不读系统代理）
+
 ## 项目结构
 
 ```
