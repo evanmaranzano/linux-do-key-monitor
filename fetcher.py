@@ -7,7 +7,7 @@ class DiscourseFetcher:
 
     def _get_json(self, url: str) -> dict | None:
         try:
-            resp = Fetcher.get(url, timeout=30)
+            resp = Fetcher.get(url, timeout=30, headers={"Referer": self.base_url})
             return resp.json()
         except Exception as e:
             print(f"[!] 请求失败 {url}: {e}")

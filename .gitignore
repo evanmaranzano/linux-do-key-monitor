@@ -6,3 +6,6 @@ __pycache__/
 *.db
 *.json
 !config.yaml
+
+.codegraph/
+.cursor/
