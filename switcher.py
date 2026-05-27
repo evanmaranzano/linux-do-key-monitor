@@ -151,7 +151,7 @@ def _verify_provider_key(key_value: str, base_url: str) -> bool:
         "messages": [{"role": "user", "content": "hi"}],
     })
     try:
-        resp = Fetcher.post(chat_url, headers=headers, data=body, timeout=15)
+        resp = Fetcher.post(chat_url, headers=headers, data=body, timeout=30)
         # 200 = 有额度可用; 401/403 = key 无效; 429 = 额度用尽/限流
         if resp.status == 200:
             return True
@@ -181,32 +181,38 @@ def cleanup_expired_providers(db_path: str) -> tuple[int, int]:
     if not db.exists():
         return 0, 0
 
-    checked = 0
-    removed = 0
-    with sqlite3.connect(str(db)) as conn:
+    # 阶段 1：快速读取，立即释放连接
+    rows = []
+    with sqlite3.connect(str(db), timeout=5) as conn:
         rows = conn.execute(
             "SELECT id, name, settings_config, is_current FROM providers WHERE name LIKE 'MiMo Auto%'"
         ).fetchall()
 
-        for row in rows:
-            provider_id, name, settings_config, is_current = row
-            extracted = _extract_key_from_settings(settings_config)
-            if not extracted:
+    # 阶段 2：逐个验证 key（网络 I/O，不持有数据库锁）
+    to_remove = []
+    checked = 0
+    for row in rows:
+        provider_id, name, settings_config, is_current = row
+        extracted = _extract_key_from_settings(settings_config)
+        if not extracted:
+            continue
+        key_value, base_url = extracted
+        checked += 1
+        if not _verify_provider_key(key_value, base_url):
+            if is_current:
+                ts = datetime.now().strftime("%H:%M:%S")
+                print(f"[{ts}] CC Switch 清理: 跳过激活中的失效 provider: {name}")
                 continue
+            to_remove.append(provider_id)
 
-            key_value, base_url = extracted
-            checked += 1
-
-            if not _verify_provider_key(key_value, base_url):
-                # 跳过当前激活的，避免断连
-                if is_current:
-                    ts = datetime.now().strftime("%H:%M:%S")
-                    print(f"[{ts}] CC Switch 清理: 跳过激活中的失效 provider: {name}")
-                    continue
-                conn.execute("DELETE FROM providers WHERE id = ?", (provider_id,))
-                removed += 1
-
-        conn.commit()
+    # 阶段 3：批量删除，短连接
+    removed = 0
+    if to_remove:
+        with sqlite3.connect(str(db), timeout=5) as conn:
+            for pid in to_remove:
+                conn.execute("DELETE FROM providers WHERE id = ?", (pid,))
+            conn.commit()
+        removed = len(to_remove)
 
     ts = datetime.now().strftime("%H:%M:%S")
     if removed:

@@ -103,7 +103,7 @@ def _verify_region(key_value: str, region: dict, verify_type: str) -> tuple[int,
         "messages": [{"role": "user", "content": "hi"}],
     })
     try:
-        resp = Fetcher.post(chat_url, headers=headers, data=body, timeout=15)
+        resp = Fetcher.post(chat_url, headers=headers, data=body, timeout=30)
         if resp.status == 200:
             return 1, region
         if resp.status == 429:
@@ -130,7 +130,7 @@ def verify_key(key_value: str, regions: list[dict], verify_type: str = "bearer")
         return _verify_region(key_value, regions[0], verify_type)
 
     saw_auth_fail = False
-    max_workers = min(len(regions), 4)
+    max_workers = min(len(regions), 2)
     results: dict[int, tuple[int, dict | None]] = {}
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
