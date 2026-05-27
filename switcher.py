@@ -2,32 +2,17 @@ import json
 import logging
 import sqlite3
 import uuid
-import ipaddress
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlparse
 
 _logger = logging.getLogger(__name__)
 
 from scrapling.fetchers import Fetcher
+from security import is_safe_url
 
 
-def _is_safe_url(url: str) -> bool:
-    """拒绝指向内网/回环地址的 URL。"""
-    try:
-        parsed = urlparse(url)
-        host = (parsed.hostname or "").strip("[]")
-        if not host or host in ("localhost", "127.0.0.1", "0.0.0.0", "::1"):
-            return False
-        try:
-            ip = ipaddress.ip_address(host)
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-                return False
-        except ValueError:
-            pass  # hostname, not IP — OK
-        return True
-    except Exception:
-        return False
+def _escape_like(s: str) -> str:
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 PROVIDER_TEMPLATE = {
     "attribution": {"commit": "", "pr": ""},
@@ -94,7 +79,7 @@ def create_switch(db_path: str, key_value: str, key_type: str = "mimo", base_url
         print(f"[!] CC Switch 数据库不存在: {db}")
         return False
 
-    if not _is_safe_url(base_url):
+    if not is_safe_url(base_url):
         print(f"[!] CC Switch: 拒绝不安全的 base_url: {base_url}")
         return False
 
@@ -104,9 +89,10 @@ def create_switch(db_path: str, key_value: str, key_type: str = "mimo", base_url
 
     with sqlite3.connect(str(db)) as conn:
         # 去重：已有同 key 的 provider 则跳过
+        escaped = _escape_like(key_value)
         existing = conn.execute(
-            "SELECT 1 FROM providers WHERE settings_config LIKE ? LIMIT 1",
-            (f'%{key_value}%',)
+            "SELECT 1 FROM providers WHERE settings_config LIKE ? ESCAPE '\\' LIMIT 1",
+            (f'%{escaped}%',)
         ).fetchone()
         if existing:
             return True
@@ -149,7 +135,7 @@ def _extract_key_from_settings(settings_config: str) -> tuple[str, str] | None:
 
 def _verify_provider_key(key_value: str, base_url: str) -> bool:
     """通过发送最小 chat 请求验证 key 是否有可用额度。"""
-    if not _is_safe_url(base_url):
+    if not is_safe_url(base_url):
         _logger.warning("拒绝验证不安全的 base_url: %s", base_url)
         return False
     # base_url 形如 https://token-plan-cn.xiaomimimo.com/anthropic

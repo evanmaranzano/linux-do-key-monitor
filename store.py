@@ -127,5 +127,11 @@ class Store:
             for r in rows
         ]
 
+    def get_all_keys(self) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT key_value, key_type FROM found_keys"
+        ).fetchall()
+        return [{"key_value": r[0], "key_type": r[1]} for r in rows]
+
     def close(self):
         self.conn.close()

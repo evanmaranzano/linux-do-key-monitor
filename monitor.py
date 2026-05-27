@@ -1,12 +1,9 @@
 import argparse
-import ipaddress
-import os
 import signal
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from urllib.parse import urlparse
 
 import yaml
 
@@ -17,7 +14,10 @@ from extractor import filter_by_title, extract_keys, verify_key
 from store import Store
 from switcher import create_switch, cleanup_expired_providers
 from ccx_sync import add_key_to_ccx, remove_key_from_ccx, get_ccx_keys
+from security import is_safe_url
 import output
+
+_ccx_proc = None
 
 
 def load_config(path: str) -> dict:
@@ -25,33 +25,19 @@ def load_config(path: str) -> dict:
         return yaml.safe_load(f)
 
 
-def _is_safe_url(url: str) -> bool:
-    """拒绝指向内网/回环地址的 URL。"""
-    try:
-        parsed = urlparse(url)
-        host = (parsed.hostname or "").strip("[]")
-        if not host or host in ("localhost", "127.0.0.1", "0.0.0.0", "::1"):
-            return False
-        try:
-            ip = ipaddress.ip_address(host)
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-                return False
-        except ValueError:
-            pass
-        return True
-    except Exception:
-        return False
-
-
 def _validate_config(cfg: dict) -> list[str]:
     """启动时校验配置安全性，返回警告列表。"""
     warnings = []
+    # 校验 forum.base_url
+    forum_url = cfg.get("forum", {}).get("base_url", "")
+    if forum_url and not is_safe_url(forum_url):
+        warnings.append(f"forum.base_url 指向内网: {forum_url}")
     # 校验 key regions 的 URL
     for k in cfg.get("keys", []):
         for r in k.get("regions", []):
             for url_key in ("verify_url", "base_url"):
                 url = r.get(url_key, "")
-                if url and not _is_safe_url(url):
+                if url and not is_safe_url(url):
                     warnings.append(f"key '{k['name']}' region '{r['name']}' {url_key} 指向内网: {url}")
     # 校验路径不包含 ..
     for path_key, path_val in [
@@ -78,19 +64,31 @@ def handle_cc_switch(cfg: dict, key_value: str, base_url: str) -> bool:
 
 
 def restart_ccx(ccx_cfg: dict):
+    global _ccx_proc
     exe_path = ccx_cfg.get("exe_path")
     if not exe_path or not Path(exe_path).exists():
         return
     exe_name = Path(exe_path).name
-    # 终止已有进程
-    try:
-        subprocess.run(["taskkill", "/F", "/IM", exe_name], capture_output=True, timeout=5)
-        time.sleep(1)
-    except Exception:
-        pass
+    # 终止已有进程：优先用 PID，回退到 taskkill
+    if _ccx_proc is not None:
+        try:
+            _ccx_proc.terminate()
+            _ccx_proc.wait(timeout=5)
+        except Exception:
+            try:
+                _ccx_proc.kill()
+            except Exception:
+                pass
+        _ccx_proc = None
+    else:
+        try:
+            subprocess.run(["taskkill", "/F", "/IM", exe_name], capture_output=True, timeout=5)
+            time.sleep(1)
+        except Exception:
+            pass
     # 后台启动
     try:
-        subprocess.Popen(
+        _ccx_proc = subprocess.Popen(
             [exe_path],
             cwd=str(Path(exe_path).parent),
             creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW,
@@ -100,6 +98,7 @@ def restart_ccx(ccx_cfg: dict):
         ts = datetime.now().strftime("%H:%M:%S")
         print(f"[{ts}] CCX: 已重启 {exe_name}")
     except Exception as e:
+        _ccx_proc = None
         ts = datetime.now().strftime("%H:%M:%S")
         print(f"[{ts}] CCX: 重启失败: {e}")
 
@@ -108,15 +107,19 @@ def reverify_ccx_keys(cfg: dict, store: Store):
     ccx_cfg = cfg.get("ccx_sync", {})
     if not ccx_cfg.get("enabled"):
         return
-    config_path = ccx_cfg["config_path"]
+    config_path = ccx_cfg.get("config_path", "")
+    if not config_path:
+        return
     ccx_keys = get_ccx_keys(config_path)
     if not ccx_keys:
         return
 
     key_patterns = cfg["keys"]
+    key_type_map = {r["key_value"]: r["key_type"] for r in store.get_all_keys()}
     removed = 0
     for key_value in ccx_keys:
-        key_cfg = next((k for k in key_patterns if k["name"] == "mimo"), None)
+        key_type = key_type_map.get(key_value)
+        key_cfg = next((k for k in key_patterns if k["name"] == key_type), None) if key_type else None
         if not key_cfg:
             continue
         regions = key_cfg.get("regions", [])
@@ -124,7 +127,7 @@ def reverify_ccx_keys(cfg: dict, store: Store):
         if not cn_region:
             continue
         valid, _ = verify_key(key_value, [cn_region], key_cfg.get("verify_type", "bearer"))
-        if valid != 1:
+        if valid == 0:
             remove_key_from_ccx(config_path, key_value)
             store.update_key_validity(key_value, valid)
             removed += 1
@@ -376,21 +379,23 @@ def main():
             except Exception as e:
                 output.log_error(f"轮询异常: {e}")
 
-            # 每轮清理失效的 CC Switch provider
-            sw = cfg.get("cc_switch", {})
-            if sw.get("enabled"):
-                try:
-                    cleanup_expired_providers(sw["db_path"])
-                except Exception as e:
-                    output.log_error(f"CC Switch 清理失败: {e}")
+            # 定期清理失效的 CC Switch provider（每 3 轮）
+            if round_num % 3 == 0:
+                sw = cfg.get("cc_switch", {})
+                if sw.get("enabled"):
+                    try:
+                        cleanup_expired_providers(sw["db_path"])
+                    except Exception as e:
+                        output.log_error(f"CC Switch 清理失败: {e}")
 
-            # 每轮重新验证 CCX config 中的 key
-            ccx_cfg = cfg.get("ccx_sync", {})
-            if ccx_cfg.get("enabled"):
-                try:
-                    reverify_ccx_keys(cfg, store)
-                except Exception as e:
-                    output.log_error(f"CCX 重新验证失败: {e}")
+            # 定期重新验证 CCX config 中的 key（每 3 轮）
+            if round_num % 3 == 0:
+                ccx_cfg = cfg.get("ccx_sync", {})
+                if ccx_cfg.get("enabled"):
+                    try:
+                        reverify_ccx_keys(cfg, store)
+                    except Exception as e:
+                        output.log_error(f"CCX 重新验证失败: {e}")
 
             round_num += 1
 
@@ -399,6 +404,15 @@ def main():
                     break
                 time.sleep(1)
     finally:
+        if _ccx_proc is not None:
+            try:
+                _ccx_proc.terminate()
+                _ccx_proc.wait(timeout=5)
+            except Exception:
+                try:
+                    _ccx_proc.kill()
+                except Exception:
+                    pass
         store.close()
         print("已停止。")
 

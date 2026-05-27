@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -40,7 +41,6 @@ def _write_config(config_path: str, cfg: dict) -> bool:
                 except Exception:
                     pass
             if attempt < 2:
-                import time
                 time.sleep(0.2 * (attempt + 1))
     return False
 
@@ -63,7 +63,7 @@ def add_key_to_ccx(config_path: str, key_value: str) -> bool:
     upstreams[0]["apiKeys"] = api_keys
 
     if _write_config(config_path, cfg):
-        _log(f"添加 key {key_value[:12]}... (共 {len(api_keys)} 个)")
+        _log(f"添加 key {key_value[:6]}...{key_value[-4:]} (共 {len(api_keys)} 个)")
         return True
     return False
 
@@ -85,7 +85,7 @@ def remove_key_from_ccx(config_path: str, key_value: str) -> bool:
     upstreams[0]["apiKeys"] = api_keys
 
     if _write_config(config_path, cfg):
-        _log(f"移除失效 key {key_value[:12]}... (剩余 {len(api_keys)} 个)")
+        _log(f"移除失效 key {key_value[:6]}...{key_value[-4:]} (剩余 {len(api_keys)} 个)")
         return True
     return False
 

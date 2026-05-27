@@ -54,9 +54,8 @@ def extract_keys(html_content: str, key_patterns: list[dict]) -> list[tuple[str,
 
     # 1. 直接 regex 匹配
     for kp in key_patterns:
-        matches = re.findall(kp["pattern"], html_content)
-        for m in matches:
-            results.append((m, kp["name"]))
+        for match in re.finditer(kp["pattern"], html_content):
+            results.append((match.group(0), kp["name"]))
 
     # 2. key 中间被插入文字（如中文）
     results.extend(_extract_inserted_keys(html_content, key_patterns))
@@ -133,22 +132,22 @@ def verify_key(key_value: str, regions: list[dict], verify_type: str = "bearer")
     saw_auth_fail = False
     max_workers = min(len(regions), 4)
     results: dict[int, tuple[int, dict | None]] = {}
-    executor = ThreadPoolExecutor(max_workers=max_workers)
-    futures = {
-        executor.submit(_verify_region, key_value, region, verify_type): i
-        for i, region in enumerate(regions)
-    }
-    try:
-        for future in as_completed(futures):
-            idx = futures[future]
-            try:
-                results[idx] = future.result()
-            except Exception:
-                results[idx] = (-1, None)
-            if results[idx][0] == 1:
-                break
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_verify_region, key_value, region, verify_type): i
+            for i, region in enumerate(regions)
+        }
+        try:
+            for future in as_completed(futures):
+                idx = futures[future]
+                try:
+                    results[idx] = future.result()
+                except Exception:
+                    results[idx] = (-1, None)
+                if results[idx][0] == 1:
+                    break
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     # 找到有效结果直接返回（无需检查未完成的区域）
     for valid, matched_region in results.values():
