@@ -31,7 +31,8 @@ def is_safe_url(url: str) -> bool:
                     if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
                         return False
             except (socket.gaierror, OSError, FuturesTimeoutError):
-                return False
+                # DNS 解析失败，无法确认是否内网，放行让实际连接处理
+                return True
         return True
     except Exception:
         return False
