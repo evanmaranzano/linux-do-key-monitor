@@ -39,7 +39,7 @@ cc_switch:
 
 ccx_sync:
   enabled: true
-  config_path: "C:/Users/Administrator/AppData/Roaming/ccx-desktop/.config/config.json"
+  config_path: "C:/Program Files/CCX/CCX Desktop/.config/config.json"
   reverify_interval: 3
   exe_path: "C:/Program Files/CCX/CCX Desktop/ccx-go.exe"
   upstream_name: "desktop-mimo-messages"
