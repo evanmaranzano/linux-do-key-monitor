@@ -45,27 +45,47 @@ def _write_config(config_path: str, cfg: dict) -> bool:
     return False
 
 
+def _add_key_to_section(cfg: dict, section: str, key_value: str) -> bool:
+    upstreams = cfg.get(section, [])
+    if not upstreams:
+        return False
+    api_keys = upstreams[0].get("apiKeys", [])
+    if key_value in api_keys:
+        return False
+    api_keys.append(key_value)
+    upstreams[0]["apiKeys"] = api_keys
+    return True
+
+
 def add_key_to_ccx(config_path: str, key_value: str) -> bool:
     cfg = _read_config(config_path)
     if cfg is None:
         return False
 
-    upstreams = cfg.get("upstream", [])
-    if not upstreams:
-        _log("无 upstream 配置")
-        return False
+    changed = False
+    if _add_key_to_section(cfg, "upstream", key_value):
+        changed = True
+    if _add_key_to_section(cfg, "responsesUpstream", key_value):
+        changed = True
 
-    api_keys = upstreams[0].get("apiKeys", [])
-    if key_value in api_keys:
-        return True
-
-    api_keys.append(key_value)
-    upstreams[0]["apiKeys"] = api_keys
-
-    if _write_config(config_path, cfg):
-        _log(f"添加 key {key_value[:6]}...{key_value[-4:]} (共 {len(api_keys)} 个)")
+    if changed and _write_config(config_path, cfg):
+        count_u = len(cfg.get("upstream", [{}])[0].get("apiKeys", []))
+        count_r = len(cfg.get("responsesUpstream", [{}])[0].get("apiKeys", []))
+        _log(f"添加 key {key_value[:6]}...{key_value[-4:]} (upstream={count_u}, responses={count_r})")
         return True
     return False
+
+
+def _remove_key_from_section(cfg: dict, section: str, key_value: str) -> bool:
+    upstreams = cfg.get(section, [])
+    if not upstreams:
+        return False
+    api_keys = upstreams[0].get("apiKeys", [])
+    if key_value not in api_keys:
+        return False
+    api_keys.remove(key_value)
+    upstreams[0]["apiKeys"] = api_keys
+    return True
 
 
 def remove_key_from_ccx(config_path: str, key_value: str) -> bool:
@@ -73,19 +93,16 @@ def remove_key_from_ccx(config_path: str, key_value: str) -> bool:
     if cfg is None:
         return False
 
-    upstreams = cfg.get("upstream", [])
-    if not upstreams:
-        return False
+    changed = False
+    if _remove_key_from_section(cfg, "upstream", key_value):
+        changed = True
+    if _remove_key_from_section(cfg, "responsesUpstream", key_value):
+        changed = True
 
-    api_keys = upstreams[0].get("apiKeys", [])
-    if key_value not in api_keys:
-        return True
-
-    api_keys.remove(key_value)
-    upstreams[0]["apiKeys"] = api_keys
-
-    if _write_config(config_path, cfg):
-        _log(f"移除失效 key {key_value[:6]}...{key_value[-4:]} (剩余 {len(api_keys)} 个)")
+    if changed and _write_config(config_path, cfg):
+        count_u = len(cfg.get("upstream", [{}])[0].get("apiKeys", []))
+        count_r = len(cfg.get("responsesUpstream", [{}])[0].get("apiKeys", []))
+        _log(f"移除失效 key {key_value[:6]}...{key_value[-4:]} (upstream={count_u}, responses={count_r})")
         return True
     return False
 
@@ -94,7 +111,8 @@ def get_ccx_keys(config_path: str) -> list[str]:
     cfg = _read_config(config_path)
     if cfg is None:
         return []
-    upstreams = cfg.get("upstream", [])
-    if not upstreams:
-        return []
-    return upstreams[0].get("apiKeys", [])
+    result = set()
+    for section in ("upstream", "responsesUpstream"):
+        for u in cfg.get(section, []):
+            result.update(u.get("apiKeys", []))
+    return list(result)

@@ -38,3 +38,9 @@ python -m pytest tests/ -q           # 运行测试
 - `store.py` — SQLite 存储（seen_topics + found_keys）
 - `output.py` — 日志和 JSON 输出
 - `ccx_sync.py` — CCX config.json 读写（add/remove/get key），CCX config 变更时自动重启 ccx-go.exe
+
+## 已知坑
+
+- `cleanup_expired_providers` 必须分三阶段（读取→验证→删除），网络 I/O 期间不得持有 SQLite 连接，否则锁住 CC Switch 数据库导致 CC Switch 应用 database locked。
+- key 验证超时（`extractor.py` / `switcher.py`）设为 30s，区域并发上限 2。过短会误判失效，并发过高会触发 429。
+- 所有日志只有 `print()` 到控制台，无持久化文件日志。
