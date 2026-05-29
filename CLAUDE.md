@@ -25,8 +25,9 @@ python -m pytest tests/ -q           # 运行测试
 ## 环境配置
 - scrapling 代理需在 `~/.bashrc` 中设置 `export http_proxy=http://127.0.0.1:7897`（curl_cffi 不读系统代理）
 - CC Switch 数据库: `%APPDATA%/CC Switch/ccswitch.db`
-- CCX 配置路径: `C:/Users/Administrator/Downloads/Compressed/ccx-windows/.config/config.json`
-- CCX 可执行文件: `C:/Users/Administrator/Downloads/Compressed/ccx-windows/ccx-go.exe`
+- CCX 配置路径: `C:/Program Files/CCX/CCX Desktop/.config/config.json`
+- CCX 可执行文件: `C:/Program Files/CCX/CCX Desktop/ccx-go.exe`
+- CCX Desktop 有两个进程：`ccx-desktop.exe`（主进程）+ `ccx-go.exe`（后端），重启时都要 kill
 
 ## 架构
 
@@ -44,3 +45,7 @@ python -m pytest tests/ -q           # 运行测试
 - `cleanup_expired_providers` 必须分三阶段（读取→验证→删除），网络 I/O 期间不得持有 SQLite 连接，否则锁住 CC Switch 数据库导致 CC Switch 应用 database locked。
 - key 验证超时（`extractor.py` / `switcher.py`）设为 30s，区域并发上限 2。过短会误判失效，并发过高会触发 429。
 - 所有日志只有 `print()` 到控制台，无持久化文件日志。
+- `ccx_sync.py` 必须按 `name` 匹配 provider（`_find_section_entry`），不能盲取 `[0]`。config.json 中 `upstream` 和 `responsesUpstream` 各有多个 provider，index 不固定。
+- `responsesUpstream` 中 mimo provider 的 name 可能变更（曾为 `xiaomimimo-afnj1p`，现为 `desktop-mimo-responses-token-cn`），通过 config.yaml `responses_upstream_name` 配置，不要硬编码。
+- `_verify_region` 用 `base_url` 构造 `/v1/messages` 端点。region 配置必须包含 `base_url`，否则回退到 `verify_url` 去掉 `/v1/models` 后缀再拼 `/v1/messages`，会导致 404。
+- SGP key（`tp-s*`）发到 CN 端点会被拒绝，只有 CN key（`tp-c*`）能用于 CN baseUrl 的 provider。
