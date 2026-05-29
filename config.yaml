@@ -42,6 +42,8 @@ ccx_sync:
   config_path: "C:/Users/Administrator/Downloads/Compressed/ccx-windows/.config/config.json"
   reverify_interval: 3
   exe_path: "C:/Users/Administrator/Downloads/Compressed/ccx-windows/ccx-go.exe"
+  upstream_name: "desktop-mimo-messages"
+  responses_upstream_name: "xiaomimimo-afnj1p"
 
 output:
   json_path: "data/found_keys.json"

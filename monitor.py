@@ -110,6 +110,8 @@ def reverify_ccx_keys(cfg: dict, store: Store):
     config_path = ccx_cfg.get("config_path", "")
     if not config_path:
         return
+    up_name = ccx_cfg.get("upstream_name", "")
+    resp_name = ccx_cfg.get("responses_upstream_name", "")
     ccx_keys = get_ccx_keys(config_path)
     if not ccx_keys:
         return
@@ -128,7 +130,7 @@ def reverify_ccx_keys(cfg: dict, store: Store):
             continue
         valid, _ = verify_key(key_value, [cn_region], key_cfg.get("verify_type", "bearer"))
         if valid == 0:
-            remove_key_from_ccx(config_path, key_value)
+            remove_key_from_ccx(config_path, key_value, up_name, resp_name)
             store.update_key_validity(key_value, valid)
             removed += 1
 
@@ -179,6 +181,8 @@ def run_one_round(cfg: dict, fetcher: DiscourseFetcher, store: Store, round_num:
 
     ccx_cfg = cfg.get("ccx_sync", {})
     ccx_config_path = ccx_cfg.get("config_path", "")
+    ccx_up_name = ccx_cfg.get("upstream_name", "")
+    ccx_resp_name = ccx_cfg.get("responses_upstream_name", "")
     ccx_mtime_before = Path(ccx_config_path).stat().st_mtime if ccx_config_path and Path(ccx_config_path).exists() else 0
 
     # 补写失败的 CC Switch
@@ -207,19 +211,17 @@ def run_one_round(cfg: dict, fetcher: DiscourseFetcher, store: Store, round_num:
             output.log_new_key(rk["key_value"], rk["key_type"], valid, 0, base_url, region_name)
             if handle_cc_switch(cfg, rk["key_value"], key_base_url):
                 store.mark_cc_switch_done(rk["key_value"])
-            ccx_cfg = cfg.get("ccx_sync", {})
             if ccx_cfg.get("enabled") and region_name == "cn":
-                add_key_to_ccx(ccx_cfg["config_path"], rk["key_value"])
+                add_key_to_ccx(ccx_config_path, rk["key_value"], ccx_up_name, ccx_resp_name)
             elif ccx_cfg.get("enabled") and region_name != "cn":
                 cn_region = next((r for r in key_cfg.get("regions", []) if r["name"] == "cn"), None)
                 if cn_region:
                     cn_valid, _ = verify_key(rk["key_value"], [cn_region], key_cfg.get("verify_type", "bearer"))
                     if cn_valid == 1:
-                        add_key_to_ccx(ccx_cfg["config_path"], rk["key_value"])
+                        add_key_to_ccx(ccx_config_path, rk["key_value"], ccx_up_name, ccx_resp_name)
         elif valid == 0:
-            ccx_cfg = cfg.get("ccx_sync", {})
             if ccx_cfg.get("enabled"):
-                remove_key_from_ccx(ccx_cfg["config_path"], rk["key_value"])
+                remove_key_from_ccx(ccx_config_path, rk["key_value"], ccx_up_name, ccx_resp_name)
 
     topics = fetcher.fetch_category_topics(cat_slug, cat_id, max_pages)
     if not topics:
@@ -283,17 +285,15 @@ def run_one_round(cfg: dict, fetcher: DiscourseFetcher, store: Store, round_num:
                 if handle_cc_switch(cfg, key_value, key_base_url):
                     store.mark_cc_switch_done(key_value)
                 if region_name == "cn":
-                    ccx_cfg = cfg.get("ccx_sync", {})
                     if ccx_cfg.get("enabled"):
-                        add_key_to_ccx(ccx_cfg["config_path"], key_value)
+                        add_key_to_ccx(ccx_config_path, key_value, ccx_up_name, ccx_resp_name)
                 elif region_name != "cn":
-                    ccx_cfg = cfg.get("ccx_sync", {})
                     if ccx_cfg.get("enabled"):
                         cn_region = next((r for r in key_cfg.get("regions", []) if r["name"] == "cn"), None)
                         if cn_region:
                             cn_valid, _ = verify_key(key_value, [cn_region], key_cfg.get("verify_type", "bearer"))
                             if cn_valid == 1:
-                                add_key_to_ccx(ccx_cfg["config_path"], key_value)
+                                add_key_to_ccx(ccx_config_path, key_value, ccx_up_name, ccx_resp_name)
 
         store.mark_topic_seen(tid, t.get("title", ""), has_key=True)
 
